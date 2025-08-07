@@ -1,28 +1,49 @@
 import streamlit as st
+from dotenv import load_dotenv
+import os
+
 from utils.auth import login
-from pages.costos import mostrar_costos
+from utils.session import guardar_sesion, sesion_valida, eliminar_sesion
+from modulos.costos import mostrar_costos
+from modulos.pedidos import mostrar_pedidos
+from modulos.cuentas import mostrar_cuentas
 
-# Control de login
+# Configuración general de la app
+st.set_page_config(page_title="3D.IEGO", layout="wide")
+
+# Cargar variables de entorno
+load_dotenv()
+USER = os.getenv("APP_USER")
+
+# Control de sesión
 if "logueado" not in st.session_state:
-    st.session_state["logueado"] = False
+    st.session_state["logueado"] = sesion_valida()
 
+# Si no está logueado, mostrar login
 if not st.session_state["logueado"]:
     login()
+    if st.session_state.get("logueado") is True:
+        guardar_sesion(USER)
+
+# Si está logueado, mostrar menú y secciones
 else:
     st.sidebar.title("Menú")
-    opcion = st.sidebar.radio("Ir a:", ["Costos y tiempos", "Pedidos", "Cuentas", "Salir"], index=0)
+    opcion = st.sidebar.radio(
+        label="",
+        options=["Costos y tiempos", "Pedidos", "Cuentas", "Salir"],
+        index=0
+    )
 
     if opcion == "Costos y tiempos":
         mostrar_costos()
 
     elif opcion == "Pedidos":
-        st.header("📦 Control de pedidos")
-        st.info("Acá vas a cargar y ver todos los pedidos de impresión.")
+        mostrar_pedidos()
 
     elif opcion == "Cuentas":
-        st.header("💸 Registro de ingresos y gastos")
-        st.info("Llevá el control de lo que entra y sale en 3D.IEGO.")
+        mostrar_cuentas()
 
     elif opcion == "Salir":
+        eliminar_sesion()
         st.session_state["logueado"] = False
-        st.experimental_rerun()
+        st.rerun()
