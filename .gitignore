@@ -1,0 +1,30 @@
+# Archivos compilados de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Entorno virtual
+venv/
+.env/
+
+# Archivos de configuración y credenciales
+.env
+config.json
+
+# Archivos temporales
+*.log
+*.tmp
+*.swp
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# Archivos de Streamlit generados
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# Archivos de datos temporales
+*.sqlite3
+*.db
+

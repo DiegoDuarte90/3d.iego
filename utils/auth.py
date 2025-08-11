@@ -9,28 +9,34 @@ PASSWORD = os.getenv("APP_PASSWORD")
 
 def login():
     st.markdown("<br><br><br>", unsafe_allow_html=True)
-
-    col1, col2, col3 = st.columns([1, 2, 1])  # centrar el form
+    col1, col2, col3 = st.columns([1, 2, 1])
 
     with col2:
         st.markdown("### 3D.IEGO - Acceso")
 
-        with st.form("login_form"):
-            username = st.text_input(
+        # Formulario
+        with st.form("login_form", clear_on_submit=False):
+            st.text_input(
                 "Usuario",
                 placeholder="Usuario",
-                key="username_input"
+                key="username_input",
             )
-            password = st.text_input(
+            st.text_input(
                 "Contraseña",
                 placeholder="Contraseña",
                 type="password",
-                key="password_input"
+                key="password_input",
             )
-            submit = st.form_submit_button("Ingresar")
+            submit = st.form_submit_button("Ingresar", type="primary", use_container_width=True)
 
-            if submit:
-                if username == USER and password == PASSWORD:
-                    st.session_state["logueado"] = True
-                else:
-                    st.error("❌ Credenciales incorrectas")
+        # Validación (fuera del with del form) leyendo desde session_state
+        if submit:
+            username = st.session_state.get("username_input", "")
+            password = st.session_state.get("password_input", "")
+
+            if username == USER and password == PASSWORD:
+                st.session_state["logueado"] = True
+                st.rerun()
+            else:
+                st.error("❌ Credenciales incorrectas")
+

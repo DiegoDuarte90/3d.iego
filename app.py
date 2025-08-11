@@ -26,12 +26,13 @@ if not st.session_state["logueado"]:
         guardar_sesion(USER)
 
 # Si está logueado, mostrar menú y secciones
-else:
+else: 
     st.sidebar.title("Menú")
     opcion = st.sidebar.radio(
-        label="",
+        label="Menú",  # obligatorio aunque después lo ocultes
         options=["Costos y tiempos", "Pedidos", "Cuentas", "Salir"],
-        index=0
+        index=0,
+        label_visibility="collapsed"
     )
 
     if opcion == "Costos y tiempos":
@@ -47,3 +48,4 @@ else:
         eliminar_sesion()
         st.session_state["logueado"] = False
         st.rerun()
+
