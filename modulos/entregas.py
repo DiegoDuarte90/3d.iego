@@ -1,135 +1,120 @@
 # modulos/entregas.py
 from __future__ import annotations
 import streamlit as st
-from datetime import datetime, date
+from datetime import date
 import pandas as pd
 
-from utils.db import SessionLocal, Cliente, Entrega
+from utils.db_app import (
+    get_session,
+    upsert_cliente,
+    search_clientes,
+    get_cliente_by_nombre,
+    crear_entrega,
+    ultimas_entregas,
+    Cliente,
+    EntregaItem,
+)
 
-# ---------------- Helpers de acceso a datos ----------------
-def _get_session():
-    return SessionLocal()
-
-def _get_cliente_por_nombre(nombre: str) -> Cliente | None:
-    if not nombre:
-        return None
-    with _get_session() as s:
-        return (
-            s.query(Cliente)
-            .filter(Cliente.nombre.ilike(nombre.strip()))
-            .one_or_none()
-        )
-
-def _upsert_cliente(nombre: str, email: str, telefono: str, direccion: str) -> Cliente:
-    with _get_session() as s:
-        cli = s.query(Cliente).filter(Cliente.nombre.ilike(nombre.strip())).one_or_none()
-        if cli:
-            cli.email = email
-            cli.telefono = telefono
-            cli.direccion = direccion
-        else:
-            cli = Cliente(
-                nombre=nombre.strip(),
-                email=email.strip(),
-                telefono=telefono.strip(),
-                direccion=direccion.strip(),
-            )
-            s.add(cli)
-        s.commit()
-        s.refresh(cli)
-        return cli
-
-def _crear_entregas(cliente_id: int, fecha: datetime, notas: str, rows: list[dict]):
-    """Crea una entrega por cada fila con pieza válida."""
-    creadas = 0
-    with _get_session() as s:
-        for r in rows:
-            pieza = (r.get("pieza") or "").strip()
-            if not pieza:
-                continue
-            try:
-                cantidad = int(r.get("cantidad") or 0)
-            except Exception:
-                cantidad = 0
-            try:
-                precio_unitario = float(r.get("precio_unitario") or 0.0)
-            except Exception:
-                precio_unitario = 0.0
-            if cantidad <= 0:
-                continue
-            ent = Entrega(
-                cliente_id=cliente_id,
-                pieza=pieza,
-                cantidad=cantidad,
-                precio_unitario=precio_unitario,
-                fecha=fecha,
-                notas=(notas or "").strip(),
-            )
-            s.add(ent)
-            creadas += 1
-        s.commit()
-    return creadas
-
-def _ultimas_entregas_con_cliente(limit: int = 10):
-    """Devuelve lista de tuplas (Entrega, Cliente) joineadas."""
-    with _get_session() as s:
-        return (
-            s.query(Entrega, Cliente)
-            .join(Cliente, Cliente.id == Entrega.cliente_id)
-            .order_by(Entrega.fecha.desc(), Entrega.id.desc())
-            .limit(limit)
-            .all()
-        )
-
-# --------------------- UI principal -----------------------
-def mostrar_entregas():
-    st.title("📦 Entregas")
-
-    # Estado inicial de la grilla
-    if "ent_items" not in st.session_state:
-        st.session_state["ent_items"] = pd.DataFrame(
+# ---------------- Helpers ----------------
+def _ensure_items_state():
+    if "ent_items_df" not in st.session_state:
+        st.session_state["ent_items_df"] = pd.DataFrame(
             [{"pieza": "", "cantidad": 1, "precio_unitario": 0.0}]
         )
 
-    # --- Cliente ---
+def _nombres_clientes(filtro: str) -> list[str]:
+    clientes = search_clientes(filtro.strip() if filtro else "", limit=50)
+    return [c.nombre for c in clientes]
+
+@st.dialog("Nuevo cliente")
+def _modal_nuevo_cliente(prefill: str = ""):
+    st.write("Completá los datos del cliente:")
+    nombre = st.text_input("Nombre *", value=prefill, key="dlg_nombre")
+    col1, col2 = st.columns(2)
+    tel = col1.text_input("Teléfono", key="dlg_tel")
+    email = col2.text_input("Email", key="dlg_email")
+    dire = st.text_input("Dirección", key="dlg_dir")
+
+    if st.button("💾 Guardar", type="primary", use_container_width=True):
+        if not nombre.strip():
+            st.error("El nombre es obligatorio.")
+            st.stop()
+        cli = upsert_cliente(nombre=nombre, telefono=tel, email=email, direccion=dire)
+        st.session_state["cliente_seleccionado"] = cli.nombre
+        st.success("Cliente guardado.")
+        st.rerun()
+
+# ---------------- Pantalla principal ----------------
+def mostrar_entregas():
+    st.title("📦 Entregas")
+    _ensure_items_state()
+
+    # -------- Cliente --------
     st.subheader("Cliente")
-    colc1, colc2 = st.columns([2, 1])
-    with colc1:
-        nombre_cli = st.text_input("Nombre del cliente", placeholder="Ej: Juan Pérez")
-    with colc2:
-        st.write("")  # espacio
-        crear_si_no = st.checkbox("Crear si no existe", value=True)
+    col_left, col_right = st.columns(2)
 
-    existente = _get_cliente_por_nombre(nombre_cli)
-    colA, colB, colC = st.columns(3)
-    email = colA.text_input("Email", value=(existente.email if existente else ""))
-    tel = colB.text_input("Teléfono", value=(existente.telefono if existente else ""))
-    dire = colC.text_input("Dirección", value=(existente.direccion if existente else ""))
+    with col_left:
+        query = st.text_input("Buscar un cliente", placeholder="Escribí un nombre…", key="filtro_cli")
 
-    if st.button("💾 Guardar cliente", disabled=not nombre_cli.strip()):
-        cli = _upsert_cliente(nombre_cli, email, tel, dire)
-        st.success(f"Cliente guardado/actualizado: {cli.nombre}")
+        resultados = _nombres_clientes(query)
+        opciones = resultados + ["➕ Nuevo cliente…"] if resultados else ["➕ Nuevo cliente…"]
+
+        eleccion = st.radio(
+            label="Resultados",
+            options=opciones,
+            index=0,
+            label_visibility="collapsed",
+            key="radio_resultados",
+        )
+
+        if eleccion == "➕ Nuevo cliente…":
+            if st.button("Crear cliente", use_container_width=True):
+                _modal_nuevo_cliente(prefill=query.strip())
+            if "cliente_seleccionado" not in st.session_state:
+                st.session_state["cliente_seleccionado"] = ""
+        else:
+            if eleccion != st.session_state.get("cliente_seleccionado"):
+                st.session_state["cliente_seleccionado"] = eleccion
+
+    with col_right:
+        seleccionado = st.session_state.get("cliente_seleccionado", "")
+        if seleccionado:
+            cli = get_cliente_by_nombre(seleccionado)
+            if cli:
+                st.markdown(f"### {cli.nombre}")
+                c1, c2 = st.columns(2)
+                c1.text_input("Teléfono", value=cli.telefono or "", disabled=True)
+                c2.text_input("Email", value=cli.email or "", disabled=True)
+                st.text_input("Dirección", value=cli.direccion or "", disabled=True)
+                st.caption("Para editar, usá “➕ Nuevo cliente…” y guardá con el mismo nombre.")
+        else:
+            st.info("Seleccioná un cliente a la izquierda o creá uno nuevo.")
+
+    cliente_ok = bool(st.session_state.get("cliente_seleccionado"))
 
     st.divider()
 
-    # --- Ítems ---
-    st.subheader("Ítems")
+    # -------- Piezas --------
+    st.subheader("Piezas")
     st.caption("Completá **pieza**, **cantidad** y **precio unitario**. Podés agregar filas con el +.")
-    df = st.data_editor(
-        st.session_state["ent_items"],
+
+    df_prev = st.session_state["ent_items_df"]
+    df_edit = st.data_editor(
+        df_prev,
         num_rows="dynamic",
         key="ent_items_editor",
+        disabled=not cliente_ok,
+        use_container_width=True,
         column_config={
             "pieza": st.column_config.TextColumn("Pieza", required=True),
             "cantidad": st.column_config.NumberColumn("Cantidad", min_value=1, step=1, format="%d"),
-            "precio_unitario": st.column_config.NumberColumn("Precio unitario $", min_value=0.0, step=100.0, format="%.2f"),
+            "precio_unitario": st.column_config.NumberColumn("Precio unitario $", min_value=0.0, step=50.0, format="%.2f"),
         },
     )
-    st.session_state["ent_items"] = df
+    st.session_state["ent_items_df"] = df_edit
 
-    # Totales
     try:
-        df_calc = df.copy()
+        df_calc = df_edit.copy()
         df_calc["subtotal"] = (
             df_calc["cantidad"].fillna(0).astype(int)
             * df_calc["precio_unitario"].fillna(0.0).astype(float)
@@ -138,59 +123,75 @@ def mostrar_entregas():
     except Exception:
         total = 0.0
 
-    c1, c2 = st.columns(2)
-    c1.metric("Ítems", len(df))
-    c2.metric("Total $", f"{total:,.2f}".replace(",", ""))
+    mt1, mt2 = st.columns(2)
+    mt1.metric("Ítems", len(df_edit))
+    mt2.metric("Total $", f"{total:,.2f}".replace(",", ""))
 
     st.divider()
 
-    # --- Confirmar y guardar ---
+    # -------- Confirmar --------
     st.subheader("Confirmar entrega")
-    cc1, cc2 = st.columns([1, 3])
-    with cc1:
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c1:
         fecha_ent = st.date_input("Fecha", value=date.today())
-    with cc2:
-        notas = st.text_input("Notas (opcional)", placeholder="Observaciones…")
+    with c2:
+        notas = st.text_input("Notas (opcional)")
+    with c3:
+        descuento = st.number_input("Descuento $", min_value=0.0, value=0.0, step=50.0)
 
-    puede_guardar = bool(nombre_cli.strip()) and len(df) > 0
+    puede_guardar = cliente_ok and len(df_edit) > 0
 
-    if st.button("✅ Guardar entrega(s)", type="primary", disabled=not puede_guardar):
-        cli = _get_cliente_por_nombre(nombre_cli)
-        if not cli:
-            if crear_si_no:
-                cli = _upsert_cliente(nombre_cli, email, tel, dire)
-            else:
-                st.error("El cliente no existe. Activá 'Crear si no existe' o guardalo primero.")
-                st.stop()
-
-        filas = df.fillna({"pieza": "", "cantidad": 0, "precio_unitario": 0.0}).to_dict(orient="records")
-        creadas = _crear_entregas(
-            cliente_id=cli.id,
-            fecha=datetime.combine(fecha_ent, datetime.now().time()),
-            notas=notas,
-            rows=filas,
+    if st.button("✅ Guardar entrega", type="primary", disabled=not puede_guardar):
+        items = (
+            df_edit.fillna({"pieza": "", "cantidad": 0, "precio_unitario": 0.0})
+            .to_dict(orient="records")
         )
-        if creadas > 0:
-            st.session_state["ent_items"] = pd.DataFrame(
-                [{"pieza": "", "cantidad": 1, "precio_unitario": 0.0}]
-            )
-            st.success(f"Se guardaron {creadas} entrega(s) ✅")
-        else:
-            st.warning("No había ítems válidos para guardar.")
+        items = [
+            {
+                "pieza": (r.get("pieza") or "").strip(),
+                "cantidad": int(r.get("cantidad") or 0),
+                "precio_unitario": float(r.get("precio_unitario") or 0.0),
+            }
+            for r in items
+            if (r.get("pieza") or "").strip() and int(r.get("cantidad") or 0) > 0
+        ]
+        if not items:
+            st.warning("No hay piezas válidas para guardar.")
+            st.stop()
+
+        ent = crear_entrega(
+            cliente_nombre=st.session_state["cliente_seleccionado"],
+            fecha=fecha_ent,
+            numero="",
+            notas=notas,
+            items=items,
+            descuento=descuento,
+        )
+
+        st.session_state["ent_items_df"] = pd.DataFrame(
+            [{"pieza": "", "cantidad": 1, "precio_unitario": 0.0}]
+        )
+        st.success(f"Entrega #{ent.id} guardada ✅ — Total ${ent.total:,.2f}".replace(",", ""))
 
     st.divider()
 
-    # --- Últimas entregas ---
+    # -------- Últimas entregas --------
     st.subheader("Últimas entregas")
-    rows = _ultimas_entregas_con_cliente(limit=10)
-    if not rows:
+    ult = ultimas_entregas(limit=10)
+    if not ult:
         st.info("Todavía no hay entregas registradas.")
         return
 
-    for e, cli in rows:
-        with st.container(border=True):
-            c1, c2, c3 = st.columns([2, 2, 1])
-            c1.write(f"**{e.fecha.strftime('%Y-%m-%d')}** — ID #{e.id}")
-            c2.write(f"**{cli.nombre if cli else 'Cliente'}** · {e.pieza} x{e.cantidad}")
-            subtotal = (e.cantidad or 0) * (e.precio_unitario or 0.0)
-            c3.write(f"${subtotal:,.2f}".replace(",", ""))
+    with get_session() as s:
+        for ent in ult:
+            cli = s.get(Cliente, ent.cliente_id)
+            items = s.query(EntregaItem).filter(EntregaItem.entrega_id == ent.id).all()
+            resumen = ", ".join(f"{it.pieza} x{it.cantidad}" for it in items[:4])
+            if len(items) > 4:
+                resumen += f" (+{len(items)-4} más)"
+
+            with st.container(border=True):
+                a, b, c = st.columns([2, 3, 1])
+                a.write(f"**{ent.fecha.strftime('%Y-%m-%d')}** — ID #{ent.id}")
+                b.write(f"**{cli.nombre if cli else 'Cliente'}** · {resumen}")
+                c.write(f"${float(ent.total or 0.0):,.2f}".replace(",", "")) 

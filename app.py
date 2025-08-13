@@ -7,7 +7,7 @@ from utils.session import guardar_sesion, sesion_valida, eliminar_sesion
 from modulos.costos import mostrar_costos
 from modulos.pedidos import mostrar_pedidos
 from modulos.cuentas import mostrar_cuentas
-from utils.db import init_db
+from utils.db_app import init_db    
 from modulos.entregas import mostrar_entregas
 
 
