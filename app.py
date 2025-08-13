@@ -8,6 +8,7 @@ from modulos.costos import mostrar_costos
 from modulos.pedidos import mostrar_pedidos
 from modulos.cuentas import mostrar_cuentas
 from utils.db import init_db
+from modulos.entregas import mostrar_entregas
 
 
 init_db()  # crea tablas si no existen
@@ -34,7 +35,7 @@ else:
     st.sidebar.title("Menú")
     opcion = st.sidebar.radio(
         label="Menú",  # obligatorio aunque después lo ocultes
-        options=["Costos y tiempos", "Pedidos", "Cuentas", "Salir"],
+        options=["Costos y tiempos", "Entregas", "Cuentas", "Salir"],
         index=0,
         label_visibility="collapsed"
     )
@@ -42,8 +43,8 @@ else:
     if opcion == "Costos y tiempos":
         mostrar_costos()
 
-    elif opcion == "Pedidos":
-        mostrar_pedidos()
+    elif opcion == "Entregas":
+        mostrar_entregas()
 
     elif opcion == "Cuentas":
         mostrar_cuentas()
