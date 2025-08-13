@@ -4,10 +4,9 @@ import streamlit as st
 from datetime import datetime, date
 import pandas as pd
 
-# Importá desde tu db.py minimal
-from db import SessionLocal, Cliente, Entrega
+from utils.db import SessionLocal, Cliente, Entrega
 
-# -------- Helpers de acceso a datos --------
+# ---------------- Helpers de acceso a datos ----------------
 def _get_session():
     return SessionLocal()
 
@@ -15,7 +14,11 @@ def _get_cliente_por_nombre(nombre: str) -> Cliente | None:
     if not nombre:
         return None
     with _get_session() as s:
-        return s.query(Cliente).filter(Cliente.nombre.ilike(nombre.strip())).one_or_none()
+        return (
+            s.query(Cliente)
+            .filter(Cliente.nombre.ilike(nombre.strip()))
+            .one_or_none()
+        )
 
 def _upsert_cliente(nombre: str, email: str, telefono: str, direccion: str) -> Cliente:
     with _get_session() as s:
@@ -29,7 +32,7 @@ def _upsert_cliente(nombre: str, email: str, telefono: str, direccion: str) -> C
                 nombre=nombre.strip(),
                 email=email.strip(),
                 telefono=telefono.strip(),
-                direccion=direccion.strip()
+                direccion=direccion.strip(),
             )
             s.add(cli)
         s.commit()
@@ -52,37 +55,37 @@ def _crear_entregas(cliente_id: int, fecha: datetime, notas: str, rows: list[dic
                 precio_unitario = float(r.get("precio_unitario") or 0.0)
             except Exception:
                 precio_unitario = 0.0
-
             if cantidad <= 0:
                 continue
-
             ent = Entrega(
                 cliente_id=cliente_id,
                 pieza=pieza,
                 cantidad=cantidad,
                 precio_unitario=precio_unitario,
                 fecha=fecha,
-                notas=(notas or "").strip()
+                notas=(notas or "").strip(),
             )
             s.add(ent)
             creadas += 1
         s.commit()
     return creadas
 
-def _ultimas_entregas(limit: int = 10):
+def _ultimas_entregas_con_cliente(limit: int = 10):
+    """Devuelve lista de tuplas (Entrega, Cliente) joineadas."""
     with _get_session() as s:
         return (
-            s.query(Entrega)
+            s.query(Entrega, Cliente)
+            .join(Cliente, Cliente.id == Entrega.cliente_id)
             .order_by(Entrega.fecha.desc(), Entrega.id.desc())
             .limit(limit)
             .all()
         )
 
-# -------------- UI principal --------------
+# --------------------- UI principal -----------------------
 def mostrar_entregas():
     st.title("📦 Entregas")
 
-    # Estado de la tabla editable (una fila inicial)
+    # Estado inicial de la grilla
     if "ent_items" not in st.session_state:
         st.session_state["ent_items"] = pd.DataFrame(
             [{"pieza": "", "cantidad": 1, "precio_unitario": 0.0}]
@@ -97,7 +100,6 @@ def mostrar_entregas():
         st.write("")  # espacio
         crear_si_no = st.checkbox("Crear si no existe", value=True)
 
-    # Autocompletar datos si existe
     existente = _get_cliente_por_nombre(nombre_cli)
     colA, colB, colC = st.columns(3)
     email = colA.text_input("Email", value=(existente.email if existente else ""))
@@ -126,8 +128,8 @@ def mostrar_entregas():
     st.session_state["ent_items"] = df
 
     # Totales
-    df_calc = df.copy()
     try:
+        df_calc = df.copy()
         df_calc["subtotal"] = (
             df_calc["cantidad"].fillna(0).astype(int)
             * df_calc["precio_unitario"].fillna(0.0).astype(float)
@@ -136,24 +138,23 @@ def mostrar_entregas():
     except Exception:
         total = 0.0
 
-    colT1, colT2 = st.columns(2)
-    colT1.metric("Ítems", len(df))
-    colT2.metric("Total $", f"{total:,.2f}".replace(",", ""))
+    c1, c2 = st.columns(2)
+    c1.metric("Ítems", len(df))
+    c2.metric("Total $", f"{total:,.2f}".replace(",", ""))
 
     st.divider()
 
     # --- Confirmar y guardar ---
     st.subheader("Confirmar entrega")
-    colh1, colh2 = st.columns([1, 3])
-    with colh1:
+    cc1, cc2 = st.columns([1, 3])
+    with cc1:
         fecha_ent = st.date_input("Fecha", value=date.today())
-    with colh2:
+    with cc2:
         notas = st.text_input("Notas (opcional)", placeholder="Observaciones…")
 
     puede_guardar = bool(nombre_cli.strip()) and len(df) > 0
 
     if st.button("✅ Guardar entrega(s)", type="primary", disabled=not puede_guardar):
-        # Asegurar cliente
         cli = _get_cliente_por_nombre(nombre_cli)
         if not cli:
             if crear_si_no:
@@ -162,7 +163,6 @@ def mostrar_entregas():
                 st.error("El cliente no existe. Activá 'Crear si no existe' o guardalo primero.")
                 st.stop()
 
-        # Crear una Entrega por cada fila válida
         filas = df.fillna({"pieza": "", "cantidad": 0, "precio_unitario": 0.0}).to_dict(orient="records")
         creadas = _crear_entregas(
             cliente_id=cli.id,
@@ -171,7 +171,6 @@ def mostrar_entregas():
             rows=filas,
         )
         if creadas > 0:
-            # Reset tabla
             st.session_state["ent_items"] = pd.DataFrame(
                 [{"pieza": "", "cantidad": 1, "precio_unitario": 0.0}]
             )
@@ -183,20 +182,15 @@ def mostrar_entregas():
 
     # --- Últimas entregas ---
     st.subheader("Últimas entregas")
-    ult = _ultimas_entregas(limit=10)
-    if not ult:
+    rows = _ultimas_entregas_con_cliente(limit=10)
+    if not rows:
         st.info("Todavía no hay entregas registradas.")
         return
 
-    for e in ult:
+    for e, cli in rows:
         with st.container(border=True):
             c1, c2, c3 = st.columns([2, 2, 1])
             c1.write(f"**{e.fecha.strftime('%Y-%m-%d')}** — ID #{e.id}")
-            # Traer nombre del cliente (consulta rápida)
-            cli = _get_cliente_por_nombre(nombre_cli="")  # placeholder para tipado
-            # consulta simple por id:
-            with _get_session() as s:
-                cli = s.query(Cliente).filter(Cliente.id == e.cliente_id).one_or_none()
             c2.write(f"**{cli.nombre if cli else 'Cliente'}** · {e.pieza} x{e.cantidad}")
             subtotal = (e.cantidad or 0) * (e.precio_unitario or 0.0)
             c3.write(f"${subtotal:,.2f}".replace(",", ""))
